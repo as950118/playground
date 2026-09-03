@@ -1,0 +1,225 @@
+name: study-02-thanos-sidecar-3x
+
+x-avalanche-args: &avalanche-args
+  - --gauge-metric-count=50
+  - --series-count=100
+  - --label-count=5
+  - --value-interval=10
+  - --series-interval=0
+  - --port=9001
+
+x-thanos-image: &thanos-image quay.io/thanos/thanos:v0.42.4
+
+services:
+  avalanche-1:
+    image: quay.io/prometheuscommunity/avalanche:latest
+    container_name: avalanche-1
+    command: *avalanche-args
+    ports:
+      - "9091:9001"
+
+  avalanche-2:
+    image: quay.io/prometheuscommunity/avalanche:latest
+    container_name: avalanche-2
+    command: *avalanche-args
+
+  avalanche-3:
+    image: quay.io/prometheuscommunity/avalanche:latest
+    container_name: avalanche-3
+    command: *avalanche-args
+
+  prometheus-shard-1:
+    image: prom/prometheus:latest
+    container_name: prometheus-shard-1
+    volumes:
+      - ./prometheus/prometheus-shard-1.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-shard-1-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    depends_on:
+      - avalanche-1
+
+  prometheus-shard-2:
+    image: prom/prometheus:latest
+    container_name: prometheus-shard-2
+    volumes:
+      - ./prometheus/prometheus-shard-2.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-shard-2-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --web.enable-lifecycle
+    depends_on:
+      - avalanche-2
+
+  prometheus-shard-3:
+    image: prom/prometheus:latest
+    container_name: prometheus-shard-3
+    volumes:
+      - ./prometheus/prometheus-shard-3.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-shard-3-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --web.enable-lifecycle
+    depends_on:
+      - avalanche-3
+
+  thanos-sidecar-1:
+    image: *thanos-image
+    container_name: thanos-sidecar-1
+    volumes:
+      - prometheus-shard-1-data:/prometheus
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-shard-1:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --objstore.config-file=/etc/thanos/bucket.yml
+    depends_on:
+      - prometheus-shard-1
+
+  thanos-sidecar-2:
+    image: *thanos-image
+    container_name: thanos-sidecar-2
+    volumes:
+      - prometheus-shard-2-data:/prometheus
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-shard-2:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --objstore.config-file=/etc/thanos/bucket.yml
+    depends_on:
+      - prometheus-shard-2
+
+  thanos-sidecar-3:
+    image: *thanos-image
+    container_name: thanos-sidecar-3
+    volumes:
+      - prometheus-shard-3-data:/prometheus
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-shard-3:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --objstore.config-file=/etc/thanos/bucket.yml
+    depends_on:
+      - prometheus-shard-3
+
+  thanos-store:
+    image: *thanos-image
+    container_name: thanos-store
+    user: "0:0"
+    volumes:
+      - thanos-store-data:/data
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - store
+      - --data-dir=/data
+      - --objstore.config-file=/etc/thanos/bucket.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    depends_on:
+      - minio-init
+
+  thanos-compact:
+    image: *thanos-image
+    container_name: thanos-compact
+    user: "0:0"
+    volumes:
+      - thanos-compact-data:/data
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - compact
+      - --data-dir=/data
+      - --objstore.config-file=/etc/thanos/bucket.yml
+      - --wait
+      - --wait-interval=30s
+    depends_on:
+      - minio-init
+
+  thanos-query:
+    image: *thanos-image
+    container_name: thanos-query
+    command:
+      - query
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-sidecar-1:10901
+      - --endpoint=thanos-sidecar-2:10901
+      - --endpoint=thanos-sidecar-3:10901
+      - --endpoint=thanos-store:10901
+    ports:
+      - "10904:10902"
+    depends_on:
+      - thanos-sidecar-1
+      - thanos-sidecar-2
+      - thanos-sidecar-3
+      - thanos-store
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 1; done &&
+      mc mb --ignore-existing local/thanos
+      "
+    depends_on:
+      - minio
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../common/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - thanos-query
+
+volumes:
+  prometheus-shard-1-data:
+  prometheus-shard-2-data:
+  prometheus-shard-3-data:
+  thanos-store-data:
+  thanos-compact-data:
+  minio-data:
