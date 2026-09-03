@@ -10,12 +10,15 @@
 |---|---|
 | `avalanche-1/2/3` | 샤드당 5,000 시리즈 |
 | `prometheus-agent-1/2/3` | 스크랩 전용. 로컬 저장 없이 `thanos-receive-N`으로 remote_write |
-| `thanos-receive-1/2/3` | remote_write 수신 + 로컬 TSDB 적재 + MinIO 업로드. `hashring.json`으로 시리즈를 노드별로 분배 (replication-factor=1) |
-| `thanos-store` | MinIO에 업로드된 과거 블록 조회 |
+| `thanos-receive-1/2/3` | remote_write 수신 + 로컬 TSDB 적재 + MinIO 업로드. `hashring.json`으로 시리즈를 노드별로 분배 (`replication-factor=3`, `tsdb.retention=48h`) |
+| `thanos-store` | MinIO에 업로드된 과거 블록 조회. memcached 기반 index-cache 연결 |
 | `thanos-compact` | 블록 압축/다운샘플링 |
-| `thanos-query` | receive 3개 + store gateway를 합쳐 글로벌 조회 |
+| `thanos-query` | receive 3개 + store gateway를 합쳐 글로벌 조회 (`--query.replica-label=receive_replica`로 복제본 dedup) |
+| `memcached` | Store Gateway의 index-cache 백엔드 |
 | `minio` | S3 호환 오브젝트 스토리지 |
 | `grafana` | Thanos Query를 데이터소스로 사용 |
+
+> **운영 튜닝 반영됨**: 수천 대 규모 노드에서 자체 개발 agent(Kafka/OTel 등)로 데이터를 밀어넣는 시나리오를 가정해 `replication-factor=1→3`, `tsdb.retention=48h`(핫 윈도우는 로컬에서 서빙), memcached index-cache를 반영했습니다. 근거는 `../docs/comparison.md`의 "실전 적용 시나리오" 절 참고.
 
 ## 실행
 
@@ -36,9 +39,9 @@ docker compose up -d
 2. **remote_write 경로 확인** — `docker compose logs thanos-receive-1 | grep -i "successfully"` 류로 수신 로그를 확인해보세요.
 3. **receive 노드 하나가 죽으면?**
    ```bash
-   ../common/scripts/kill_and_check.sh . thanos-receive-1 http://localhost:10904 up
+   ../common/scripts/kill_and_check.sh . thanos-receive-1 http://localhost:10904 'count(up) by (job)'
    ```
-   replication-factor=1이므로 해당 노드가 담당하던 시리즈는 재기동 전까지 조회가 끊깁니다 — 02번의 sidecar 장애(샤드 단위 부분 장애)와 성격은 비슷하지만, **agent 쪽엔 로컬 백업 저장소가 아예 없어서** receive가 완전히 복구되기 전까지는 그 구간 데이터를 다른 경로로 복구할 수 없습니다. (replication-factor를 2~3으로 올리면 완화되지만 저장 비용이 커집니다 — 대시보드 기록 시 이 트레이드오프를 적어보세요.)
+   replication-factor=3이라 `count(up) by (job)`이 노드 1개가 죽어도 값 그대로(3/3) 유지됩니다 — 다른 2개 replica가 매끄럽게 커버. 다만 `--query.replica-label=receive_replica`가 **반드시 같이 있어야** 합니다: 이게 없으면 Thanos Query가 복제본 3개를 서로 다른 시리즈로 착각해서 집계 쿼리 결과가 replication-factor배(3배)로 부풀려지는 조용한 버그가 생깁니다(직접 겪은 문제 — RF만 올리고 이 플래그를 빼먹었더니 `count(up)`이 9로 나왔습니다). replication-factor를 올리면 그만큼 저장 비용도 커진다는 트레이드오프는 여전히 유효합니다.
 4. **오브젝트 스토리지 업로드 확인** — MinIO 콘솔에서 `thanos` 버킷에 블록이 쌓이는지 확인 (receive가 직접 업로드).
 5. **쿼리 응답시간 / 디스크 사용량 비교**
    ```bash

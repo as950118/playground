@@ -86,10 +86,11 @@ services:
     command:
       - receive
       - --tsdb.path=/data
+      - --tsdb.retention=48h
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
       - --remote-write.address=0.0.0.0:19291
-      - --receive.replication-factor=1
+      - --receive.replication-factor=3
       - --receive.local-endpoint=thanos-receive-1:10901
       - --receive.hashrings-file=/etc/thanos/hashring.json
       - --objstore.config-file=/etc/thanos/bucket.yml
@@ -110,10 +111,11 @@ services:
     command:
       - receive
       - --tsdb.path=/data
+      - --tsdb.retention=48h
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
       - --remote-write.address=0.0.0.0:19291
-      - --receive.replication-factor=1
+      - --receive.replication-factor=3
       - --receive.local-endpoint=thanos-receive-2:10901
       - --receive.hashrings-file=/etc/thanos/hashring.json
       - --objstore.config-file=/etc/thanos/bucket.yml
@@ -132,16 +134,22 @@ services:
     command:
       - receive
       - --tsdb.path=/data
+      - --tsdb.retention=48h
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
       - --remote-write.address=0.0.0.0:19291
-      - --receive.replication-factor=1
+      - --receive.replication-factor=3
       - --receive.local-endpoint=thanos-receive-3:10901
       - --receive.hashrings-file=/etc/thanos/hashring.json
       - --objstore.config-file=/etc/thanos/bucket.yml
       - --label=receive_replica="3"
     depends_on:
       - minio-init
+
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: memcached
+    command: ["-m", "64", "-I", "5m"]
 
   thanos-store:
     image: *thanos-image
@@ -150,14 +158,17 @@ services:
     volumes:
       - thanos-store-data:/data
       - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+      - ./thanos/index-cache.yml:/etc/thanos/index-cache.yml:ro
     command:
       - store
       - --data-dir=/data
       - --objstore.config-file=/etc/thanos/bucket.yml
+      - --index-cache.config-file=/etc/thanos/index-cache.yml
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
     depends_on:
       - minio-init
+      - memcached
 
   thanos-compact:
     image: *thanos-image
@@ -182,6 +193,7 @@ services:
       - query
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
+      - --query.replica-label=receive_replica
       - --endpoint=thanos-receive-1:10901
       - --endpoint=thanos-receive-2:10901
       - --endpoint=thanos-receive-3:10901
