@@ -81,6 +81,7 @@ services:
   thanos-sidecar-1:
     image: *thanos-image
     container_name: thanos-sidecar-1
+    user: "0:0"
     volumes:
       - prometheus-shard-1-data:/prometheus
       - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
@@ -97,6 +98,7 @@ services:
   thanos-sidecar-2:
     image: *thanos-image
     container_name: thanos-sidecar-2
+    user: "0:0"
     volumes:
       - prometheus-shard-2-data:/prometheus
       - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
@@ -113,6 +115,7 @@ services:
   thanos-sidecar-3:
     image: *thanos-image
     container_name: thanos-sidecar-3
+    user: "0:0"
     volumes:
       - prometheus-shard-3-data:/prometheus
       - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro

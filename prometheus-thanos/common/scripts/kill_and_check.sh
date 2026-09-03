@@ -28,7 +28,7 @@ sleep 3
 echo ">>> querying ${BASE_URL}/api/v1/query?query=${QUERY} after stopping ${SERVICE}"
 curl -s -w "\nhttp_code=%{http_code}\n" \
   --data-urlencode "query=${QUERY}" \
-  "${BASE_URL}/api/v1/query"
+  "${BASE_URL}/api/v1/query" || echo "(no response -- query endpoint is unreachable, e.g. the single-Prometheus baseline)"
 
 echo
 echo ">>> restarting '${SERVICE}'"
