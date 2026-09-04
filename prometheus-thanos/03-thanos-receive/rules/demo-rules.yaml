@@ -1,0 +1,26 @@
+groups:
+  - name: demo-alerts
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }}/{{ $labels.instance }} has been down for 15s"
+
+      - alert: AvalancheGaugeTooHigh
+        expr: avg(avalanche_gauge_metric_mmmmm_0_0) > 80
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: "avalanche_gauge_metric_mmmmm_0_0 average is {{ $value }}, above 80"
+
+  - name: demo-recording-rules
+    rules:
+      - record: job:up:sum
+        expr: sum(up) by (job)
+
+      - record: avalanche:gauge_0:avg
+        expr: avg(avalanche_gauge_metric_mmmmm_0_0)

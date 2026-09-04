@@ -13,7 +13,9 @@
 | `thanos-receive-1/2/3` | remote_write 수신 + 로컬 TSDB 적재 + MinIO 업로드. `hashring.json`으로 시리즈를 노드별로 분배 (`replication-factor=3`, `tsdb.retention=48h`) |
 | `thanos-store` | MinIO에 업로드된 과거 블록 조회. memcached 기반 index-cache 연결 |
 | `thanos-compact` | 블록 압축/다운샘플링 |
-| `thanos-query` | receive 3개 + store gateway를 합쳐 글로벌 조회 (`--query.replica-label=receive_replica`로 복제본 dedup) |
+| `thanos-query` | receive 3개 + store gateway + ruler를 합쳐 글로벌 조회 (`--query.replica-label=receive_replica`로 복제본 dedup) |
+| `thanos-ruler` | `rules/demo-rules.yaml`의 alerting/recording rule을 Thanos Query에 대고 주기 평가, firing 알림을 Alertmanager로 전송. Prometheus의 룰 평가 기능을 대체하는 컴포넌트 |
+| `alertmanager` | Ruler가 보낸 알림을 라우팅/수신 (데모용 `default` 리시버, 실제 알림 채널 연동은 없음) |
 | `memcached` | Store Gateway의 index-cache 백엔드 |
 | `minio` | S3 호환 오브젝트 스토리지 |
 | `grafana` | Thanos Query를 데이터소스로 사용 |
@@ -29,6 +31,8 @@ docker compose up -d
 - Thanos Query (조회 진입점): http://localhost:10904
 - Prometheus agent-1 상태 페이지(쿼리 불가, 타겟 상태만): http://localhost:9090
 - Thanos Receive-1 자체 지표: http://localhost:10905
+- Thanos Ruler (룰/알림 상태): http://localhost:10906
+- Alertmanager: http://localhost:9093
 - Grafana: http://localhost:3000
 - MinIO 콘솔: http://localhost:19001 (minioadmin / minioadmin)
 - Avalanche shard-1 원본 메트릭: http://localhost:9091/metrics
@@ -48,6 +52,19 @@ docker compose up -d
    ../common/scripts/query_bench.sh http://localhost:10904 up
    ../common/scripts/disk_usage.sh .
    ```
+6. **알림(Alerting)이 실제로 동작하는지 확인** — Prometheus 없이도 Thanos Ruler가 룰 평가를 전담합니다.
+   ```bash
+   # 룰 평가 상태 확인 (rule.go가 15초 간격으로 evaluate)
+   curl -s http://localhost:10906/api/v1/rules | python3 -m json.tool
+
+   # 타겟 하나를 죽여서 TargetDown 알림을 실제로 발동시켜보기
+   docker compose stop avalanche-1
+   sleep 45   # for: 15s + eval-interval 15s 여유를 두고 대기
+   curl -s http://localhost:10906/api/v1/rules   # TargetDown이 "firing"으로 바뀜
+   curl -s http://localhost:9093/api/v2/alerts   # Alertmanager에도 도착했는지 확인
+   docker compose start avalanche-1
+   ```
+   recording rule 결과(`job:up:sum`, `avalanche:gauge_0:avg`)는 Thanos Query(10904)로도 조회됩니다 — ruler가 만든 시리즈도 다른 컴포넌트와 동일하게 StoreAPI로 글로벌 뷰에 합류하기 때문입니다.
 
 ## 정리
 

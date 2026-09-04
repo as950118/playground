@@ -198,6 +198,7 @@ services:
       - --endpoint=thanos-receive-2:10901
       - --endpoint=thanos-receive-3:10901
       - --endpoint=thanos-store:10901
+      - --endpoint=thanos-ruler:10901
     ports:
       - "10904:10902"
     depends_on:
@@ -205,6 +206,41 @@ services:
       - thanos-receive-2
       - thanos-receive-3
       - thanos-store
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
+
+  thanos-ruler:
+    image: *thanos-image
+    container_name: thanos-ruler
+    user: "0:0"
+    volumes:
+      - thanos-ruler-data:/data
+      - ./rules:/etc/thanos/rules:ro
+      - ./thanos/bucket.yml:/etc/thanos/bucket.yml:ro
+    command:
+      - rule
+      - --data-dir=/data
+      - --rule-file=/etc/thanos/rules/*.yaml
+      - --eval-interval=15s
+      - --label=ruler_replica="1"
+      - --query=http://thanos-query:10902
+      - --alertmanagers.url=http://alertmanager:9093
+      - --objstore.config-file=/etc/thanos/bucket.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    ports:
+      - "10906:10902"
+    depends_on:
+      - thanos-query
+      - alertmanager
 
   minio:
     image: minio/minio:latest
@@ -254,4 +290,5 @@ volumes:
   thanos-receive-3-data:
   thanos-store-data:
   thanos-compact-data:
+  thanos-ruler-data:
   minio-data:

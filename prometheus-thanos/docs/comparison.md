@@ -60,3 +60,12 @@
 - `memcached` 서비스 추가 + `thanos-store`에 `--index-cache.config-file`(`thanos/index-cache.yml`, type: MEMCACHED)로 연결 — `thanos-store` 로그에 `msg="created index cache"` 확인, 에러 없음
 - **`thanos-query`에 `--query.replica-label=receive_replica` 추가 — 이 작업 중 실제로 발견한 버그.** RF를 1→3으로 올리기만 하고 이 플래그를 안 넣었더니, Thanos Query가 복제본 3개(`receive_replica="1"/"2"/"3"`)를 서로 다른 시리즈로 인식해서 `count(up) by (job)`이 원래 3이어야 할 값이 **9로 부풀려짐**. 이 플래그를 추가하고 나서야 3으로 정상화됨. RF를 올릴 때 dedup용 replica-label 플래그를 같이 안 넣으면 글로벌 뷰의 집계 쿼리(count, sum 등)가 전부 replication factor배만큼 부풀려지는 조용한 버그가 생긴다는 교훈 — sidecar 권한 버그와 마찬가지로 "에러 없이 그냥 숫자가 틀리게 나오는" 종류라 알아채기 더 어려움.
 - 재검증: `--query.replica-label` 적용 후 `receive-1`을 kill해도 `count(up) by (job)`이 **3/3 그대로 유지**(dedup으로 나머지 2개 replica가 매끄럽게 커버) — RF=1 때는 같은 테스트에서 값 자체는 안 부풀었지만 대신 fetch 실패 warning이 떴던 것과 대비됨
+
+### Thanos Ruler 추가 — "Prometheus 없이 alerting까지 가능한가?"의 실증
+
+앞서 "Prometheus 없이 조회는 되는데 alerting은 Thanos Ruler라는 별도 컴포넌트가 필요하다"고 정리했던 부분을 실제로 03번 스택에 추가하고 end-to-end로 검증함.
+
+- 추가한 컴포넌트: `thanos-ruler`(rule 평가, `--query=http://thanos-query:10902`로 PromQL 평가 대상 지정, `--alertmanagers.url`로 알림 전송), `alertmanager`(데모용 `default` 리시버만 있는 최소 설정)
+- 룰 파일(`03-thanos-receive/rules/demo-rules.yaml`): alerting rule 2개(`TargetDown`: `up == 0`, `AvalancheGaugeTooHigh`: `avg(avalanche_gauge_metric_mmmmm_0_0) > 80`) + recording rule 2개(`job:up:sum`, `avalanche:gauge_0:avg`)
+- **실제 알림 발동까지 실증**: `avalanche-1` 컨테이너를 정지 → 45초 후 `thanos-ruler`의 `/api/v1/rules`에서 `TargetDown`이 `state: firing`으로 전환 확인 → 같은 시각 `alertmanager`의 `/api/v2/alerts`에서 동일 alert(`fingerprint`, `labels.instance=avalanche-1:9001`) 수신 확인. 즉 Prometheus 없이도 감지→평가→라우팅까지 전체 alerting 파이프라인이 완결됨.
+- recording rule 결과(`job:up:sum`)는 `thanos-ruler` 자신의 API뿐 아니라 **Thanos Query(글로벌 뷰)로도 조회됨** — ruler도 다른 컴포넌트처럼 StoreAPI를 노출해서 `thanos-query`의 `--endpoint` 목록에 등록되기 때문. Prometheus의 "룰 평가 + 그 결과를 자기 TSDB에 저장" 기능이, Thanos에서는 "별도 컴포넌트가 평가 + StoreAPI로 노출"하는 방식으로 그대로 대체됨을 확인.
