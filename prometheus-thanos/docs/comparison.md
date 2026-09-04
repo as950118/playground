@@ -69,3 +69,13 @@
 - 룰 파일(`03-thanos-receive/rules/demo-rules.yaml`): alerting rule 2개(`TargetDown`: `up == 0`, `AvalancheGaugeTooHigh`: `avg(avalanche_gauge_metric_mmmmm_0_0) > 80`) + recording rule 2개(`job:up:sum`, `avalanche:gauge_0:avg`)
 - **실제 알림 발동까지 실증**: `avalanche-1` 컨테이너를 정지 → 45초 후 `thanos-ruler`의 `/api/v1/rules`에서 `TargetDown`이 `state: firing`으로 전환 확인 → 같은 시각 `alertmanager`의 `/api/v2/alerts`에서 동일 alert(`fingerprint`, `labels.instance=avalanche-1:9001`) 수신 확인. 즉 Prometheus 없이도 감지→평가→라우팅까지 전체 alerting 파이프라인이 완결됨.
 - recording rule 결과(`job:up:sum`)는 `thanos-ruler` 자신의 API뿐 아니라 **Thanos Query(글로벌 뷰)로도 조회됨** — ruler도 다른 컴포넌트처럼 StoreAPI를 노출해서 `thanos-query`의 `--endpoint` 목록에 등록되기 때문. Prometheus의 "룰 평가 + 그 결과를 자기 TSDB에 저장" 기능이, Thanos에서는 "별도 컴포넌트가 평가 + StoreAPI로 노출"하는 방식으로 그대로 대체됨을 확인.
+
+### 실제 Go agent 개발 — "자체 개발 agent" 시나리오를 코드로 검증
+
+이전에 raw curl로 손으로 만든 protobuf를 직접 쏘아본 것을, 실제 시스템 지표를 읽어 주기적으로 전송하는 진짜 프로그램(`03-thanos-receive/go-agent/`)으로 재현함. Prometheus는 이 경로에 전혀 등장하지 않음.
+
+- 수집: `gopsutil`로 CPU 사용률/메모리 사용량/네트워크 송수신 바이트를 10초 간격으로 실측 (사용자가 말한 실제 운영 주기와 동일)
+- 인코딩: `prometheus/prometheus` 전체를 의존성으로 끌어오지 않고, WriteRequest/TimeSeries/Label/Sample protobuf를 직접 구현(`remotewrite.go`) — 라벨은 이름 오름차순 정렬 필수(안 하면 `409 out of order labels`, 앞서 raw curl 데모에서 겪었던 것과 동일한 제약)
+- 압축: 이번엔 손으로 만든 snappy 인코더가 아니라 `github.com/golang/snappy`(레퍼런스 구현)를 사용 — 앞서 raw curl 데모에서 `cramjam`의 압축 결과가 Thanos의 s2 디코더와 호환 안 됐던 문제(`s2: corrupt input`)를 겪었던 것과 달리, 실제 Go 프로덕션에서 쓸 법한 정식 라이브러리라 별다른 삽질 없이 바로 성공함
+- 실측 확인: `docker logs go-agent`에 10초마다 `sent: cpu=9.9% mem=55.6% ...` 로그, 에러 없음. `curl 'http://localhost:10904/api/v1/query?query={job="go-custom-agent"}'`로 `node_cpu_usage_percent`, `node_memory_used_bytes` 등이 실제 값으로 조회됨. counter 메트릭(`node_network_receive_bytes_total`)에 `rate()`도 정상 동작(≈47B/s) 확인.
+- 결론: "Kafka/OTel 대신 간단한 Go agent 하나로도 이 아키텍처가 성립하는가?"에 대한 답은 명확히 예 — remote_write 스펙(protobuf 인코딩 + 라벨 정렬 + snappy 압축 + 헤더 3개)만 지키면 되고, 실제로 이를 만족하는 최소 구현은 의존성 2개(`gopsutil`, `golang/snappy`)와 200줄 미만의 Go 코드로 충분함.

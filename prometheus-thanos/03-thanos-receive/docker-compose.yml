@@ -151,6 +151,17 @@ services:
     container_name: memcached
     command: ["-m", "64", "-I", "5m"]
 
+  go-agent:
+    build: ./go-agent
+    container_name: go-agent
+    environment:
+      - REMOTE_WRITE_URL=http://thanos-receive-1:19291/api/v1/receive
+      - COLLECT_INTERVAL=10s
+      - AGENT_JOB=go-custom-agent
+      - AGENT_INSTANCE=go-agent-1
+    depends_on:
+      - thanos-receive-1
+
   thanos-store:
     image: *thanos-image
     container_name: thanos-store

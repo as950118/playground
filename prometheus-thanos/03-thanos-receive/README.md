@@ -10,6 +10,7 @@
 |---|---|
 | `avalanche-1/2/3` | 샤드당 5,000 시리즈 |
 | `prometheus-agent-1/2/3` | 스크랩 전용. 로컬 저장 없이 `thanos-receive-N`으로 remote_write |
+| `go-agent` | 직접 만든 수집기 예시. `gopsutil`로 실제 CPU/메모리/네트워크 사용량을 읽어 remote_write로 Thanos Receive에 직접 전송 (Prometheus 전혀 안 거침) — 자세한 내용은 [`go-agent/README.md`](./go-agent/README.md) |
 | `thanos-receive-1/2/3` | remote_write 수신 + 로컬 TSDB 적재 + MinIO 업로드. `hashring.json`으로 시리즈를 노드별로 분배 (`replication-factor=3`, `tsdb.retention=48h`) |
 | `thanos-store` | MinIO에 업로드된 과거 블록 조회. memcached 기반 index-cache 연결 |
 | `thanos-compact` | 블록 압축/다운샘플링 |
