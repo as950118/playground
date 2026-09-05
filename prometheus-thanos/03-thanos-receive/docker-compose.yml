@@ -154,11 +154,22 @@ services:
   go-agent:
     build: ./go-agent
     container_name: go-agent
+    networks:
+      - default
+      - kafka-net
     environment:
       - REMOTE_WRITE_URL=http://thanos-receive-1:19291/api/v1/receive
       - COLLECT_INTERVAL=10s
       - AGENT_JOB=go-custom-agent
       - AGENT_INSTANCE=go-agent-1
+      # SEND_TARGET: remote_write (default) | kafka | both. Kafka sink talks
+      # to the practice-kafka cluster over the external kafka-net network
+      # attached above, to compare producer-side compression codecs using
+      # this agent's real (small, high-frequency) metrics payload.
+      - SEND_TARGET=remote_write
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29092
+      - KAFKA_TOPIC=go-agent-metrics
+      - KAFKA_COMPRESSION=none
     depends_on:
       - thanos-receive-1
 
@@ -303,3 +314,9 @@ volumes:
   thanos-compact-data:
   thanos-ruler-data:
   minio-data:
+
+networks:
+  default:
+  kafka-net:
+    external: true
+    name: practice-kafka_kafka-net
