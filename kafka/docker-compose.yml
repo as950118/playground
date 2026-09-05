@@ -1,0 +1,112 @@
+x-kafka-common: &kafka-common
+  image: apache/kafka:3.8.0
+  networks:
+    - kafka-net
+  environment: &kafka-common-env
+    # Apple Silicon + Colima(QEMU) 환경에서 JDK 21이 SVE 명령어를 오탐지해 SIGILL로 죽는
+    # 문제를 우회합니다. (https://bugs.openjdk.org/browse/JDK-8329083 계열 이슈)
+    JAVA_TOOL_OPTIONS: "-XX:UseSVE=0"
+    # 이 Colima VM은 메모리가 4GiB뿐이라 브로커 기본 힙(1GB×3)으로는 다른 컨테이너와
+    # 함께 돌릴 때 OOM으로 죽었습니다. 실습용으로 힙을 512m까지 낮춰 여유를 확보합니다.
+    KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
+    KAFKA_PROCESS_ROLES: broker,controller
+    # 클러스터를 구성하는 모든 노드는 동일한 CLUSTER_ID를 공유해야 합니다.
+    CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    # INTERNAL: 브로커 간 통신(복제) / EXTERNAL: 호스트에서 접속하는 클라이언트용
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+    KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093"
+    # JBOD: 브로커 1대당 디스크(로그 디렉터리) 2개를 등록합니다. 새 파티션은 이 목록에
+    # 라운드로빈으로 배정되고, 파티션 단위로 어느 디스크에 있는지는
+    # `kafka-log-dirs.sh --describe`로 확인할 수 있습니다.
+    KAFKA_LOG_DIRS: /var/lib/kafka/data1,/var/lib/kafka/data2
+
+x-volume-init: &volume-init
+  image: busybox
+  # apache/kafka 이미지는 appuser(uid 1000)로 브로커를 실행하는데, 새로 생성된 도커
+  # 볼륨은 기본적으로 root 소유라 브로커가 로그 디렉터리에 쓰지 못하고 죽습니다.
+  # 브로커를 띄우기 전에 각 디스크 볼륨의 소유권을 appuser로 미리 맞춰줍니다.
+  command: sh -c "chown -R 1000:1000 /disk1 /disk2"
+
+services:
+  kafka-1-init:
+    <<: *volume-init
+    volumes:
+      - kafka-1-disk1:/disk1
+      - kafka-1-disk2:/disk2
+
+  kafka-2-init:
+    <<: *volume-init
+    volumes:
+      - kafka-2-disk1:/disk1
+      - kafka-2-disk2:/disk2
+
+  kafka-3-init:
+    <<: *volume-init
+    volumes:
+      - kafka-3-disk1:/disk1
+      - kafka-3-disk2:/disk2
+
+  kafka-1:
+    <<: *kafka-common
+    container_name: kafka-1
+    depends_on:
+      kafka-1-init:
+        condition: service_completed_successfully
+    ports:
+      - "9092:9092"
+    environment:
+      <<: *kafka-common-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092,EXTERNAL://localhost:9092
+    volumes:
+      - kafka-1-disk1:/var/lib/kafka/data1
+      - kafka-1-disk2:/var/lib/kafka/data2
+
+  kafka-2:
+    <<: *kafka-common
+    container_name: kafka-2
+    depends_on:
+      kafka-2-init:
+        condition: service_completed_successfully
+    ports:
+      - "9094:9092"
+    environment:
+      <<: *kafka-common-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:29092,EXTERNAL://localhost:9094
+    volumes:
+      - kafka-2-disk1:/var/lib/kafka/data1
+      - kafka-2-disk2:/var/lib/kafka/data2
+
+  kafka-3:
+    <<: *kafka-common
+    container_name: kafka-3
+    depends_on:
+      kafka-3-init:
+        condition: service_completed_successfully
+    ports:
+      - "9096:9092"
+    environment:
+      <<: *kafka-common-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:29092,EXTERNAL://localhost:9096
+    volumes:
+      - kafka-3-disk1:/var/lib/kafka/data1
+      - kafka-3-disk2:/var/lib/kafka/data2
+
+networks:
+  kafka-net:
+    driver: bridge
+
+volumes:
+  kafka-1-disk1:
+  kafka-1-disk2:
+  kafka-2-disk1:
+  kafka-2-disk2:
+  kafka-3-disk1:
+  kafka-3-disk2:
