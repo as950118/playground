@@ -1,0 +1,49 @@
+name: study-01-single-prometheus
+
+services:
+  avalanche:
+    image: quay.io/prometheuscommunity/avalanche:latest
+    container_name: avalanche
+    command:
+      - --gauge-metric-count=100
+      - --series-count=150
+      - --label-count=5
+      - --value-interval=10
+      - --series-interval=0
+      - --port=9001
+    ports:
+      - "9091:9001"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=6h
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    depends_on:
+      - avalanche
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../common/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
